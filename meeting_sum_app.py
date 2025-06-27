@@ -1,11 +1,11 @@
 import streamlit as st
-import whisper
 import openai
 import tempfile
 import os
 import textwrap
 from pydub import AudioSegment
 from pyannote.audio import Pipeline
+from faster_whisper import WhisperModel
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Meeting Summarizer for Fixed Income", layout="centered")
@@ -40,23 +40,28 @@ if st.button("▶️ Transcribe and Summarize") and audio_file and hf_token and 
         pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=hf_token)
         diarization = pipeline(wav_path)
 
-        # Load Whisper
-        model = whisper.load_model(whisper_model)
-        audio = AudioSegment.from_wav(wav_path)
+        # Load faster-whisper
+        model = WhisperModel(whisper_model, compute_type="int8")
 
         # Transcribe segments
         transcript = ""
+        audio_segment = AudioSegment.from_wav(wav_path)
+
         for turn, _, speaker in diarization.itertracks(yield_label=True):
             start_ms = int(turn.start * 1000)
             end_ms = int(turn.end * 1000)
-            segment = audio[start_ms:end_ms]
+            segment = audio_segment[start_ms:end_ms]
 
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
                 segment.export(temp_audio.name, format="wav")
-                result = model.transcribe(temp_audio.name, fp16=False)
-                os.remove(temp_audio.name)
+                segments, _ = model.transcribe(temp_audio.name)
 
-            transcript += f"{speaker}: {result['text'].strip()}\n"
+                for seg in segments:
+                    text = seg.text.strip()
+                    if text:
+                        transcript += f"{speaker}: {text}\n"
+
+                os.remove(temp_audio.name)
 
         st.subheader("🗣 Full Transcript")
         st.text_area("Transcript", transcript, height=300)
